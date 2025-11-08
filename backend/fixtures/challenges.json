@@ -1,0 +1,170 @@
+[
+  {
+    "model": "challenges.challenge",
+    "pk": "11111111-1111-1111-1111-111111111111",
+    "fields": {
+      "title": "SQL Injection Basics",
+      "description": "Your mission is to exploit a vulnerable login form. The authentication system uses a SQL database, but it doesn't properly sanitize user inputs. Can you bypass the login without knowing the password?\n\nAccess the vulnerable application at the provided URL.",
+      "category": "web",
+      "difficulty": 1,
+      "points": 100,
+      "flag": "FLAG{sql_1nj3ct10n_m4st3r}",
+      "hints": [
+        "Try using SQL comments to bypass authentication logic.",
+        "Common SQL injection payloads use single quotes and OR conditions.",
+        "The classic payload is: ' OR '1'='1"
+      ],
+      "files": [],
+      "url": "http://ctf-challenges.local/sqli-basic",
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "22222222-2222-2222-2222-222222222222",
+    "fields": {
+      "title": "Caesar's Secret",
+      "description": "Julius Caesar used a simple cipher to encrypt his messages. We intercepted this message:\n\nYMJ KWFB KQFl NX: KWFI{hfjxfw_hnumjw_nx_jfxd}\n\nCan you decrypt it and find the flag?",
+      "category": "crypto",
+      "difficulty": 1,
+      "points": 50,
+      "flag": "FLAG{caesar_cipher_is_easy}",
+      "hints": [
+        "This is a Caesar cipher with a shift value.",
+        "Try different shift values from 1 to 25.",
+        "The shift value is 5."
+      ],
+      "files": [],
+      "url": null,
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "33333333-3333-3333-3333-333333333333",
+    "fields": {
+      "title": "Hidden in Plain Sight",
+      "description": "We received this image file. At first glance, it looks normal, but our intelligence suggests there's hidden information inside. Can you extract the secret message?\n\nDownload: stego_challenge.png",
+      "category": "stego",
+      "difficulty": 2,
+      "points": 150,
+      "flag": "FLAG{st3g4n0gr4phy_d3t3ct3d}",
+      "hints": [
+        "Check the image metadata first.",
+        "Try using steghide or similar tools.",
+        "The password is 'hacman'."
+      ],
+      "files": ["stego_challenge.png"],
+      "url": null,
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "44444444-4444-4444-4444-444444444444",
+    "fields": {
+      "title": "Memory Forensics",
+      "description": "We captured a memory dump from a compromised system. The attacker was using a suspicious process. Your task is to analyze the memory dump and find the malicious process name.\n\nDownload: memory_dump.raw\n\nFlag format: FLAG{process_name}",
+      "category": "forensics",
+      "difficulty": 3,
+      "points": 250,
+      "flag": "FLAG{malware_backdoor}",
+      "hints": [
+        "Use Volatility framework for memory analysis.",
+        "Start with the 'pslist' plugin to see running processes.",
+        "Look for unusual process names or suspicious parent-child relationships."
+      ],
+      "files": ["memory_dump.raw"],
+      "url": null,
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "55555555-5555-5555-5555-555555555555",
+    "fields": {
+      "title": "Buffer Overflow 101",
+      "description": "We have a vulnerable binary that has a buffer overflow vulnerability. The binary prompts for input and processes it unsafely. Can you exploit this to read the flag from the server?\n\nConnect to: nc ctf.example.com 9001\nDownload binary: vuln_binary",
+      "category": "binary",
+      "difficulty": 4,
+      "points": 400,
+      "flag": "FLAG{buff3r_0v3rfl0w_pwn3d}",
+      "hints": [
+        "The binary has NX disabled, so you can execute shellcode on the stack.",
+        "Find the offset to overwrite the return address.",
+        "Use pattern_create and pattern_offset from GDB-PEDA."
+      ],
+      "files": ["vuln_binary"],
+      "url": null,
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "66666666-6666-6666-6666-666666666666",
+    "fields": {
+      "title": "XSS Playground",
+      "description": "This web application has a comment system. Unfortunately, it doesn't properly sanitize user input. Can you inject JavaScript to steal the admin's cookie?\n\nThe admin bot will visit your comment every 30 seconds.\n\nURL: http://ctf-challenges.local/xss-playground",
+      "category": "web",
+      "difficulty": 2,
+      "points": 150,
+      "flag": "FLAG{xss_vuln3r4b1l1ty_f0und}",
+      "hints": [
+        "Try basic XSS payloads like <script>alert(1)</script>",
+        "The application filters some tags but not all.",
+        "Use event handlers like onerror or onload in img tags."
+      ],
+      "files": [],
+      "url": "http://ctf-challenges.local/xss-playground",
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "77777777-7777-7777-7777-777777777777",
+    "fields": {
+      "title": "RSA Beginner",
+      "description": "We intercepted an RSA-encrypted message. The public key parameters are:\n\nN = 323\ne = 5\nEncrypted message: 70\n\nCan you decrypt it and find the flag?",
+      "category": "crypto",
+      "difficulty": 2,
+      "points": 200,
+      "flag": "FLAG{rsa_sm4ll_pr1m3s}",
+      "hints": [
+        "N is the product of two primes. Try factoring it.",
+        "Once you have p and q, calculate phi(N) = (p-1)(q-1).",
+        "Find d, the modular inverse of e mod phi(N)."
+      ],
+      "files": [],
+      "url": null,
+      "is_active": true,
+      "solve_count": 0
+    }
+  },
+  {
+    "model": "challenges.challenge",
+    "pk": "88888888-8888-8888-8888-888888888888",
+    "fields": {
+      "title": "Network Packet Analysis",
+      "description": "We captured network traffic from a suspicious connection. Analyze the PCAP file and find the exfiltrated data.\n\nDownload: traffic_capture.pcap\n\nThe flag is in the exfiltrated data.",
+      "category": "forensics",
+      "difficulty": 3,
+      "points": 300,
+      "flag": "FLAG{p4ck3t_4n4lys1s_3xp3rt}",
+      "hints": [
+        "Use Wireshark to analyze the PCAP file.",
+        "Look for HTTP POST requests or FTP transfers.",
+        "Follow TCP streams to reconstruct the data."
+      ],
+      "files": ["traffic_capture.pcap"],
+      "url": null,
+      "is_active": true,
+      "solve_count": 0
+    }
+  }
+]
