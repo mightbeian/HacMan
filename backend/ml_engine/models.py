@@ -1,40 +1,38 @@
 from django.db import models
-import uuid
+from django.contrib.auth import get_user_model
 
-class MLModel(models.Model):
-    MODEL_TYPES = [
-        ('difficulty', 'Difficulty Predictor'),
-        ('hint', 'Hint Generator'),
-    ]
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=200)
-    model_type = models.CharField(max_length=20, choices=MODEL_TYPES)
-    version = models.CharField(max_length=50)
-    file_path = models.CharField(max_length=500)
-    accuracy = models.FloatField(null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-    trained_at = models.DateTimeField(auto_now_add=True)
-    metadata = models.JSONField(default=dict)
+User = get_user_model()
+
+class UserPerformanceMetrics(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='metrics')
+    avg_solve_time = models.FloatField(default=0.0)
+    avg_attempts_per_challenge = models.FloatField(default=0.0)
+    preferred_categories = models.JSONField(default=list)
+    skill_levels = models.JSONField(default=dict)
+    learning_rate = models.FloatField(default=1.0)
+    difficulty_preference = models.IntegerField(default=2)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['-trained_at']
+        verbose_name_plural = 'User Performance Metrics'
     
     def __str__(self):
-        return f"{self.name} v{self.version} ({self.get_model_type_display()})"
+        return f"{self.user.username} - Metrics"
 
-class TrainingLog(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    model = models.ForeignKey(MLModel, on_delete=models.CASCADE, related_name='training_logs')
-    samples_count = models.IntegerField()
-    training_accuracy = models.FloatField()
-    validation_accuracy = models.FloatField()
-    training_time_seconds = models.FloatField()
-    parameters = models.JSONField(default=dict)
+class MLPrediction(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    challenge = models.ForeignKey('challenges.Challenge', on_delete=models.CASCADE)
+    predicted_difficulty = models.FloatField()
+    predicted_time = models.FloatField()
+    confidence_score = models.FloatField()
+    features_used = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
     
     def __str__(self):
-        return f"Training log for {self.model.name} - {self.created_at}"
+        return f"{self.user.username} - {self.challenge.title} prediction"
