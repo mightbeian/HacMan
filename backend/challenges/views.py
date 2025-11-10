@@ -1,223 +1,208 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.db.models import Count, Avg, Q
-from datetime import timedelta
-import time
+from django.db.models import Q
+from django_filters.rest_framework import DjangoFilterBackend
 
-from .models import Challenge, Submission, HintRequest
+from .models import Category, Challenge, Submission, UserProgress, HintRequest
 from .serializers import (
+    CategorySerializer,
     ChallengeListSerializer,
     ChallengeDetailSerializer,
     SubmissionSerializer,
-    HintRequestSerializer,
-    FlagSubmissionSerializer
+    SubmitFlagSerializer,
+    HintRequestSerializer
 )
-from players.models import PlayerProfile
-from ml_engine.services import DifficultyPredictor, HintGenerator
+from users.models import User
+from ml_engine.tasks import update_difficulty_model, generate_hint
+
+class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    permission_classes = [AllowAny]
 
 class ChallengeViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Challenge.objects.filter(is_active=True)
-    permission_classes = [IsAuthenticatedOrReadOnly]
-    
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return ChallengeListSerializer
-        return ChallengeDetailSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['category', 'difficulty']
+    search_fields = ['title', 'description', 'tags']
+    ordering_fields = ['difficulty', 'points', 'solve_count', 'created_at']
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        category = self.request.query_params.get('category')
-        difficulty = self.request.query_params.get('difficulty')
-        
-        if category:
-            queryset = queryset.filter(category=category)
-        if difficulty:
-            queryset = queryset.filter(difficulty=difficulty)
-        
-        return queryset
+        return Challenge.objects.filter(is_active=True)
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-    def submit(self, request, pk=None):
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return ChallengeDetailSerializer
+        return ChallengeListSerializer
+    
+    @action(detail=True, methods=['post'])
+    def submit_flag(self, request, pk=None):
         challenge = self.get_object()
-        serializer = FlagSubmissionSerializer(data=request.data)
+        serializer = SubmitFlagSerializer(data=request.data)
         
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        # Rate limiting check
-        recent_submissions = Submission.objects.filter(
-            player=request.user,
-            challenge=challenge,
-            submitted_at__gte=timezone.now() - timedelta(seconds=5)
-        ).count()
-        
-        if recent_submissions > 0:
-            return Response(
-                {'error': 'Please wait a few seconds before submitting again.'},
-                status=status.HTTP_429_TOO_MANY_REQUESTS
-            )
-        
-        # Check if already solved
-        if Submission.objects.filter(player=request.user, challenge=challenge, is_correct=True).exists():
-            return Response(
-                {'error': 'You have already solved this challenge.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         submitted_flag = serializer.validated_data['flag']
-        is_correct = challenge.verify_flag(submitted_flag)
+        time_taken = serializer.validated_data.get('time_taken', 0)
         
-        # Calculate solve time
-        first_attempt = Submission.objects.filter(
-            player=request.user,
+        # Get or create user progress
+        progress, created = UserProgress.objects.get_or_create(
+            user=request.user,
             challenge=challenge
-        ).order_by('submitted_at').first()
-        
-        solve_time = None
-        if first_attempt:
-            solve_time = int((timezone.now() - first_attempt.submitted_at).total_seconds())
-        
-        # Get hints used
-        hints_used = HintRequest.objects.filter(
-            player=request.user,
-            challenge=challenge
-        ).count()
-        
-        # Create submission
-        submission = Submission.objects.create(
-            player=request.user,
-            challenge=challenge,
-            submitted_flag=submitted_flag,
-            is_correct=is_correct,
-            solve_time_seconds=solve_time if is_correct else None,
-            hints_used=hints_used
         )
         
-        if is_correct:
-            # Update challenge solve count
+        progress.attempts += 1
+        progress.time_spent += time_taken
+        
+        is_correct = submitted_flag.strip() == challenge.flag.strip()
+        
+        # Create submission record
+        submission = Submission.objects.create(
+            user=request.user,
+            challenge=challenge,
+            flag_submitted=submitted_flag,
+            is_correct=is_correct,
+            time_taken=time_taken,
+            hints_used=progress.hints_used
+        )
+        
+        challenge.attempt_count += 1
+        
+        if is_correct and not progress.is_solved:
+            # First time solving
+            progress.is_solved = True
+            progress.completed_at = timezone.now()
             challenge.solve_count += 1
-            challenge.save()
             
-            # Update player profile
-            profile = PlayerProfile.objects.get(user=request.user)
-            points_earned = max(challenge.points - (hints_used * 10), 10)
-            profile.total_points += points_earned
-            profile.challenges_solved += 1
-            profile.save()
+            # Award points
+            points_awarded = challenge.points - (progress.hints_used * 10)
+            points_awarded = max(points_awarded, challenge.points // 4)
             
-            return Response({
+            request.user.total_points += points_awarded
+            request.user.challenges_completed += 1
+            request.user.update_rank()
+            request.user.save()
+            
+            # Update challenge stats
+            if challenge.solve_count == 1:
+                challenge.avg_completion_time = time_taken
+            else:
+                challenge.avg_completion_time = (
+                    (challenge.avg_completion_time * (challenge.solve_count - 1) + time_taken) 
+                    / challenge.solve_count
+                )
+            
+            # Trigger ML model update
+            update_difficulty_model.delay(request.user.id)
+            
+            response_data = {
                 'success': True,
-                'message': 'Correct flag! Challenge solved!',
-                'points_earned': points_earned,
-                'solve_time': solve_time,
-                'total_points': profile.total_points
-            }, status=status.HTTP_200_OK)
+                'message': 'Congratulations! Flag is correct!',
+                'points_awarded': points_awarded,
+                'total_points': request.user.total_points,
+                'new_rank': request.user.rank,
+            }
+        elif is_correct:
+            response_data = {
+                'success': True,
+                'message': 'Flag is correct, but you already solved this challenge.',
+            }
         else:
-            attempts = Submission.objects.filter(
-                player=request.user,
-                challenge=challenge
-            ).count()
-            
-            return Response({
+            response_data = {
                 'success': False,
                 'message': 'Incorrect flag. Try again!',
-                'attempts': attempts
-            }, status=status.HTTP_200_OK)
+                'attempts': progress.attempts,
+            }
+        
+        progress.save()
+        challenge.update_stats()
+        challenge.save()
+        
+        return Response(response_data)
     
-    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
-    def hint(self, request, pk=None):
+    @action(detail=True, methods=['post'])
+    def request_hint(self, request, pk=None):
         challenge = self.get_object()
         
-        # Check if already solved
-        if Submission.objects.filter(player=request.user, challenge=challenge, is_correct=True).exists():
-            return Response(
-                {'error': 'You have already solved this challenge.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check hint count
-        hints_used = HintRequest.objects.filter(
-            player=request.user,
+        progress, created = UserProgress.objects.get_or_create(
+            user=request.user,
             challenge=challenge
-        ).count()
-        
-        if hints_used >= 3:
-            return Response(
-                {'error': 'Maximum hints reached for this challenge.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        hint_level = hints_used + 1
-        
-        # Check if hint already exists
-        existing_hint = HintRequest.objects.filter(
-            player=request.user,
-            challenge=challenge,
-            hint_level=hint_level
-        ).first()
-        
-        if existing_hint:
-            return Response({
-                'hint': existing_hint.hint_text,
-                'hint_level': hint_level,
-                'hints_remaining': 3 - hint_level,
-                'penalty_points': 10
-            })
-        
-        # Generate hint using ML
-        hint_generator = HintGenerator()
-        hint_text = hint_generator.generate_hint(
-            challenge.description,
-            challenge.category,
-            hint_level
         )
         
-        # Save hint request
+        next_hint_index = progress.hints_used
+        
+        if next_hint_index >= len(challenge.hints):
+            return Response(
+                {'error': 'No more hints available'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create hint request
         hint_request = HintRequest.objects.create(
-            player=request.user,
+            user=request.user,
             challenge=challenge,
-            hint_level=hint_level,
-            hint_text=hint_text
+            hint_index=next_hint_index
+        )
+        
+        progress.hints_used += 1
+        progress.save()
+        
+        hint_data = challenge.hints[next_hint_index]
+        
+        return Response({
+            'hint': hint_data['text'],
+            'cost': hint_data.get('cost', 0),
+            'hints_remaining': len(challenge.hints) - progress.hints_used
+        })
+    
+    @action(detail=True, methods=['post'])
+    def generate_ai_hint(self, request, pk=None):
+        """Generate an AI-powered hint based on user's progress"""
+        challenge = self.get_object()
+        
+        progress = UserProgress.objects.filter(
+            user=request.user,
+            challenge=challenge
+        ).first()
+        
+        if not progress:
+            return Response(
+                {'error': 'Start the challenge first'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Async task to generate hint
+        result = generate_hint.delay(
+            challenge.id,
+            request.user.id,
+            progress.attempts,
+            progress.hints_used
         )
         
         return Response({
-            'hint': hint_text,
-            'hint_level': hint_level,
-            'hints_remaining': 3 - hint_level,
-            'penalty_points': 10
+            'message': 'Generating AI hint...',
+            'task_id': result.id
         })
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['get'])
     def recommended(self, request):
-        predictor = DifficultyPredictor()
-        recommended_ids = predictor.get_recommendations(request.user)
+        """Get AI-recommended challenges for the user"""
+        from ml_engine.predictor import DifficultyPredictor
         
-        recommended_challenges = Challenge.objects.filter(
-            id__in=recommended_ids,
-            is_active=True
-        )
+        predictor = DifficultyPredictor()
+        recommended_challenges = predictor.get_recommended_challenges(request.user)
         
         serializer = self.get_serializer(recommended_challenges, many=True)
         return Response(serializer.data)
+
+class SubmissionViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = SubmissionSerializer
+    permission_classes = [IsAuthenticated]
     
-    @action(detail=False, methods=['get'])
-    def stats(self, request):
-        total_challenges = Challenge.objects.filter(is_active=True).count()
-        
-        category_stats = Challenge.objects.filter(is_active=True).values('category').annotate(
-            count=Count('id'),
-            avg_difficulty=Avg('difficulty')
-        )
-        
-        difficulty_stats = Challenge.objects.filter(is_active=True).values('difficulty').annotate(
-            count=Count('id')
-        )
-        
-        return Response({
-            'total_challenges': total_challenges,
-            'by_category': list(category_stats),
-            'by_difficulty': list(difficulty_stats)
-        })
+    def get_queryset(self):
+        return Submission.objects.filter(user=self.request.user)
